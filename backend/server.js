@@ -17,11 +17,7 @@ app.use((req, res, next) => {
 });
 
 const pool = new Pool({
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  port: 5432,
+  connectionString: process.env.DATABASE_URL,
 });
 
 pool.on('error', (err) => {
@@ -80,4 +76,5 @@ app.listen(port, () => {
   console.log(`Database host: ${process.env.DB_HOST}`);
   console.log(`Database name: ${process.env.DB_NAME}`);
   console.log(`Countries API base URL: ${COUNTRIES_API_BASE_URL}`);
+  console.log('DATABASE_URL:', process.env.DATABASE_URL);
 });
