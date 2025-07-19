@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend-deployment
+  namespace: dev
   labels:
     app: backend
 spec:
@@ -15,19 +16,19 @@ spec:
         app: backend
     spec:
       containers:
-        - name: backend
-          image: dream-vacation-app-backend:latest
-          imagePullPolicy: Never
-          ports:
-            - containerPort: 3001
-          envFrom:
-            - secretRef:
-                name: backend-secrets
+      - name: backend
+        image: gidoiualexandru/dream-vacation-app-backend:dev
+        ports:
+        - containerPort: 3001
+        envFrom:
+        - secretRef:
+            name: backend-secrets
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: backend-service
+  namespace: dev
 spec:
   selector:
     app: backend

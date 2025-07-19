@@ -1,0 +1,152 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - dev
+      - staging
+      - main
+  pull_request:
+    branches:
+      - dev
+      - staging
+      - main
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME_BACKEND: gidoiualexandru/dream-vacation-app-backend
+  IMAGE_NAME_FRONTEND: gidoiualexandru/dream-vacation-app-frontend
+
+jobs:
+  build-and-test-backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          POSTGRES_DB: dreamvacations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install backend dependencies
+      working-directory: ./backend
+      run: npm install
+
+    - name: Run backend tests
+      working-directory: ./backend
+      env:
+        DATABASE_URL: postgresql://root:${{ secrets.DB_PASSWORD }}@localhost:5432/dreamvacations?sslmode=disable
+        COUNTRIES_API_BASE_URL: https://restcountries.com/v3.1
+      run: npm test
+
+    - name: Build backend Docker image
+      working-directory: ./backend
+      run: docker build -t ${{ env.IMAGE_NAME_BACKEND }}:${{ github.sha }} .
+
+    - name: Log in to Docker Hub
+      if: github.event_name == 'push'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Push backend Docker image
+      if: github.event_name == 'push'
+      run: |
+        docker tag ${{ env.IMAGE_NAME_BACKEND }}:${{ github.sha }} ${{ env.IMAGE_NAME_BACKEND }}:${{ github.ref_name }}
+        docker push ${{ env.IMAGE_NAME_BACKEND }}:${{ github.sha }}
+        docker push ${{ env.IMAGE_NAME_BACKEND }}:${{ github.ref_name }}
+
+  build-and-test-frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install frontend dependencies
+      working-directory: ./frontend
+      run: npm install
+
+    - name: Run frontend tests
+      working-directory: ./frontend
+      run: npm test
+
+    - name: Build frontend
+      working-directory: ./frontend
+      run: npm run build
+
+    - name: Build frontend Docker image
+      working-directory: ./frontend
+      run: docker build -t ${{ env.IMAGE_NAME_FRONTEND }}:${{ github.sha }} .
+
+    - name: Log in to Docker Hub
+      if: github.event_name == 'push'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Push frontend Docker image
+      if: github.event_name == 'push'
+      run: |
+        docker tag ${{ env.IMAGE_NAME_FRONTEND }}:${{ github.sha }} ${{ env.IMAGE_NAME_FRONTEND }}:${{ github.ref_name }}
+        docker push ${{ env.IMAGE_NAME_FRONTEND }}:${{ github.sha }}
+        docker push ${{ env.IMAGE_NAME_FRONTEND }}:${{ github.ref_name }}
+
+  deploy:
+    needs: [build-and-test-backend, build-and-test-frontend]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v4
+      with:
+        version: 'latest'
+
+    - name: Configure Kubernetes context
+      env:
+        KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      run: |
+        mkdir -p $HOME/.kube
+        echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+
+    - name: Deploy to Kubernetes
+      env:
+        ENVIRONMENT: ${{ github.ref_name }}
+      run: |
+        # Update image tags in K8s manifests
+        sed -i "s|image:.*dream-vacation-app-backend.*|image: ${{ env.IMAGE_NAME_BACKEND }}:${{ github.ref_name }}|" k8s/backend_deployment.yaml
+        sed -i "s|image:.*dream-vacation-app-frontend.*|image: ${{ env.IMAGE_NAME_FRONTEND }}:${{ github.ref_name }}|" k8s/frontend_deployment.yaml
+        # Apply manifests based on environment
+        kubectl apply -f k8s/backend_secrets.yaml --namespace=${{ github.ref_name }}
+        kubectl apply -f k8s/backend_deployment.yaml --namespace=${{ github.ref_name }}
+        kubectl apply -f k8s/frontend_deployment.yaml --namespace=${{ github.ref_name }}
+        kubectl rollout status deployment/backend-deployment -n ${{ github.ref_name }}
+        kubectl rollout status deployment/frontend-deployment -n ${{ github.ref_name }}
