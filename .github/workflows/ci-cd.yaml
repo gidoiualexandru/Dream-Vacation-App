@@ -95,6 +95,8 @@ jobs:
 
     - name: Build frontend
       working-directory: ./frontend
+      env:
+        NODE_OPTIONS: --openssl-legacy-provider
       run: npm run build
 
     - name: Build frontend Docker image
